@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 import config
 import logging
 import re
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -68,28 +69,94 @@ class SSOAuth:
                 "Content-Type": "application/x-www-form-urlencoded"
             }
 
+            # IMPORTANT: Don't follow redirects immediately
             response = self.session.post(
                 config.SSO_LOGIN_URL,
                 headers=headers,
                 data=login_data,
-                allow_redirects=True
+                allow_redirects=False
             )
 
-            # Step 3: Handle the redirects and get the session ID
-            logger.info("Following redirects after login...")
+            logger.info(f"Initial login response status: {response.status_code}")
 
-            # Check if the URL contains 'loginName', which indicates successful login
-            if 'loginName' in response.url:
-                logger.info("Login successful")
+            # If 401 Unauthorized, treat it as the weak password page regardless of content
+            if response.status_code == 401:
+                logger.info("Got 401 Unauthorized - Processing as weak password page")
 
-                # Step 4: Get user information
-                logger.info("Retrieving user information...")
-                self._get_user_info()
+                # Extract the execution parameter from the response
+                soup = BeautifulSoup(response.text, "html.parser")
+                continue_form = soup.find('form', {'id': 'continueForm'})
 
-                return True
-            else:
-                logger.error("Login failed, response URL: " + response.url)
-                return False
+                if continue_form:
+                    execution_input = continue_form.find('input', {'name': 'execution'})
+
+                    if execution_input:
+                        execution_val = execution_input.get('value')
+                        logger.info(f"Found execution value for continue form: {execution_val[:20]}...")
+
+                        # Wait for 6 seconds for the countdown
+                        logger.info("Waiting for 6 seconds for the 'Ignore Once' button to become active...")
+                        time.sleep(6)
+
+                        # Submit the "ignoreAndContinue" form
+                        continue_data = {
+                            "execution": execution_val,
+                            "_eventId": "ignoreAndContinue"
+                        }
+
+                        logger.info("Submitting 'Ignore Once' request...")
+                        response = self.session.post(
+                            config.SSO_LOGIN_URL,
+                            headers=headers,
+                            data=continue_data,
+                            allow_redirects=False
+                        )
+
+                        logger.info(f"'Ignore Once' response status: {response.status_code}")
+
+                        # Follow the redirect chain from this point
+                        if response.status_code in (301, 302, 303, 307, 308):
+                            redirect_url = response.headers.get('Location')
+                            logger.info(f"Redirecting to: {redirect_url}")
+
+                            # Follow all redirects automatically now
+                            response = self.session.get(redirect_url, allow_redirects=True)
+
+                            logger.info(f"Final URL after 'Ignore Once': {response.url}")
+
+                            if "iclass.buaa.edu.cn" in response.url:
+                                logger.info("Successfully handled weak password and completed login")
+                                self._get_user_info()
+                                return True
+                            else:
+                                logger.error(f"Failed to redirect to iClass after 'Ignore Once'. URL: {response.url}")
+                                return False
+                    else:
+                        logger.error("Could not find execution parameter in the continue form")
+                        return False
+                else:
+                    logger.error("Could not find continue form on the page")
+                    return False
+
+            # If not 401, follow normal redirect flow
+            elif response.status_code in (301, 302, 303, 307, 308):
+                redirect_url = response.headers.get('Location')
+                logger.info(f"Redirecting to: {redirect_url}")
+
+                # Follow the redirect
+                response = self.session.get(redirect_url, allow_redirects=True)
+
+                # Check if we're successfully logged in
+                logger.info(f"Final URL after redirects: {response.url}")
+
+                if "iclass.buaa.edu.cn" in response.url:
+                    logger.info("Login successful")
+                    self._get_user_info()
+                    return True
+
+            # If we get here, login failed
+            logger.error(f"Login failed. Final URL: {response.url}")
+            return False
 
         except Exception as e:
             logger.error(f"Error during login: {str(e)}")
@@ -102,9 +169,14 @@ class SSOAuth:
         """
         try:
             # Extract the login name from URL if present
-            login_name_match = re.search(r'loginName=([^&#]+)', self.session.get(config.ICLASS_SERVICE_URL).url)
+            logger.info("Getting service URL to extract login name...")
+            response = self.session.get(config.ICLASS_SERVICE_URL)
+            logger.info(f"Service URL response: {response.url}")
+
+            login_name_match = re.search(r'loginName=([^&#]+)', response.url)
             if login_name_match:
                 login_name = login_name_match.group(1)
+                logger.info(f"Extracted login name: {login_name}")
 
                 # Get user information from API
                 login_api = f"{config.ICLASS_API_BASE}/user/login.action"
