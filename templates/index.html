@@ -45,6 +45,7 @@
 
             <div class="controls">
                 <form method="post" action="{{ url_for('refresh') }}" style="display: inline;">
+                    <input type="hidden" name="view" value="{{ view_type }}">
                     <button type="submit" class="refresh-button">刷新课程</button>
                 </form>
 
@@ -52,6 +53,12 @@
                     <button type="submit" class="logout-button">退出登录</button>
                 </form>
             </div>
+        </div>
+
+        <!-- View Selector -->
+        <div class="view-selector">
+            <a href="{{ url_for('index', view='today') }}" class="view-button {% if view_type == 'today' %}active{% endif %}">今日课程</a>
+            <a href="{{ url_for('index', view='all') }}" class="view-button {% if view_type == 'all' %}active{% endif %}">所有课程</a>
         </div>
 
         <div class="form-group update-frequency">
@@ -69,53 +76,115 @@
             当前时间: <span id="current-time"></span>
         </div>
 
-        <!-- Courses Container -->
-        {% if today_courses %}
-        <div class="course-container">
-            {% for course in today_courses %}
-            <div class="course-card {% if course.signStatus == '1' %}signed{% else %}unsigned{% endif %}">
-                <div class="course-header">
-                    <div class="course-title">{{ course.course_name }}</div>
-                    <div class="course-time">
-                        {{ course.beginTime|replace('2025-', '')|replace('2024-', '') }} -
-                        {{ course.endTime.split(' ')[1] }}
+        <!-- Today's Courses -->
+        {% if view_type == 'today' %}
+            {% if today_courses %}
+            <div class="course-container">
+                {% for course in today_courses %}
+                <div class="course-card {% if course.signStatus == '1' %}signed{% else %}unsigned{% endif %}">
+                    <div class="course-header">
+                        <div class="course-title">{{ course.course_name }}</div>
+                        <div class="course-time">
+                            {{ course.beginTime|replace('2025-', '')|replace('2024-', '') }} -
+                            {{ course.endTime.split(' ')[1] }}
+                        </div>
+                    </div>
+
+                    <div class="course-location">
+                        {% if course.course_address %}
+                        <strong>地点:</strong> {{ course.course_address }}
+                        {% endif %}
+                    </div>
+
+                    <div class="course-teacher">
+                        {% if course.teacher_name %}
+                        <strong>教师:</strong> {{ course.teacher_name }}
+                        {% endif %}
+                    </div>
+
+                    <div class="course-status">
+                        <strong>状态:</strong>
+                        {% if course.signStatus == '1' %}
+                        已签到
+                        {% else %}
+                        未签到
+                        {% endif %}
+                    </div>
+
+                    <div class="qrcode-container">
+                        <div id="qrcode-{{ course.schedId }}"></div>
+                        <div class="refresh-info">二维码将自动更新</div>
+                        <div class="url-display" id="url-{{ course.schedId }}"></div>
                     </div>
                 </div>
-
-                <div class="course-location">
-                    {% if course.course_address %}
-                    <strong>地点:</strong> {{ course.course_address }}
-                    {% endif %}
-                </div>
-
-                <div class="course-teacher">
-                    {% if course.teacher_name %}
-                    <strong>教师:</strong> {{ course.teacher_name }}
-                    {% endif %}
-                </div>
-
-                <div class="course-status">
-                    <strong>状态:</strong>
-                    {% if course.signStatus == '1' %}
-                    已签到
-                    {% else %}
-                    未签到
-                    {% endif %}
-                </div>
-
-                <div class="qrcode-container">
-                    <div id="qrcode-{{ course.schedId }}"></div>
-                    <div class="refresh-info">二维码将自动更新</div>
-                    <div class="url-display" id="url-{{ course.schedId }}"></div>
-                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
-        </div>
+            {% else %}
+            <div class="no-courses">
+                <p>今天没有需要签到的课程</p>
+            </div>
+            {% endif %}
         {% else %}
-        <div class="no-courses">
-            <p>今天没有需要签到的课程</p>
-        </div>
+            <!-- All Courses (Past and Future) -->
+            {% if all_course_schedules %}
+                <!-- Date Filter -->
+                <div class="date-filter">
+                    <input type="text" id="date-search" placeholder="搜索日期 (例如: 2025-03-06)" onkeyup="filterCourses()">
+                    <button class="filter-button" onclick="togglePastCourses()">切换显示/隐藏过期课程</button>
+                </div>
+
+                <div class="course-container" id="all-courses-container">
+                    {% for course in all_course_schedules %}
+                    <div class="course-card {% if course.signStatus == '1' %}signed{% else %}unsigned{% endif %} {% if course.isPast %}past-course{% endif %}"
+                         data-date="{{ course.formattedDate }}">
+                        <div class="course-date">{{ course.formattedDate }}
+                            {% if course.isToday %}<span class="today-badge">今天</span>{% endif %}
+                        </div>
+
+                        <div class="course-header">
+                            <div class="course-title">{{ course.course_name }}</div>
+                            <div class="course-time">
+                                {{ course.beginTime|replace('2025-', '')|replace('2024-', '') }} -
+                                {{ course.endTime.split(' ')[1] }}
+                            </div>
+                        </div>
+
+                        <div class="course-location">
+                            {% if course.course_address %}
+                            <strong>地点:</strong> {{ course.course_address }}
+                            {% endif %}
+                        </div>
+
+                        <div class="course-teacher">
+                            {% if course.teacher_name %}
+                            <strong>教师:</strong> {{ course.teacher_name }}
+                            {% endif %}
+                        </div>
+
+                        <div class="course-status">
+                            <strong>状态:</strong>
+                            {% if course.signStatus == '1' %}
+                            已签到
+                            {% else %}
+                            未签到
+                            {% endif %}
+                        </div>
+
+                        <div class="qrcode-container">
+                            <div id="qrcode-{{ course.schedId }}"></div>
+                            <div class="refresh-info">二维码将自动更新</div>
+                            <div class="url-display" id="url-{{ course.schedId }}"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+            <div class="no-courses">
+                <p>没有找到课程</p>
+            </div>
+            {% endif %}
         {% endif %}
+
         {% endif %}
     </div>
 
@@ -123,11 +192,21 @@
         // Global variables
         let updateTimer;
         let updateInterval = 5000; // Default 5 seconds
+        let hidePastCourses = true; // Hide past courses by default
+
+        {% if view_type == 'today' %}
         const courseSchedIds = [
             {% for course in today_courses %}
             "{{ course.schedId }}",
             {% endfor %}
         ];
+        {% else %}
+        const courseSchedIds = [
+            {% for course in all_course_schedules %}
+            "{{ course.schedId }}",
+            {% endfor %}
+        ];
+        {% endif %}
 
         // Page load initialization
         window.onload = function() {
@@ -138,6 +217,11 @@
             if (courseSchedIds.length > 0) {
                 startAutoUpdate();
             }
+
+            {% if view_type == 'all' %}
+            // Apply initial filtering for past courses
+            togglePastCourses(true); // Initialize without toggling state
+            {% endif %}
         };
 
         // Update current time display
@@ -204,6 +288,52 @@
                     correctLevel: QRCode.CorrectLevel.H
                 });
             }
+        }
+
+        // Filter courses by date
+        function filterCourses() {
+            const searchInput = document.getElementById('date-search');
+            const filter = searchInput.value.toLowerCase();
+            const container = document.getElementById('all-courses-container');
+
+            if (container) {
+                const courses = container.getElementsByClassName('course-card');
+
+                for (let i = 0; i < courses.length; i++) {
+                    const courseDate = courses[i].getAttribute('data-date').toLowerCase();
+
+                    // Skip past courses if they are hidden
+                    if (hidePastCourses && courses[i].classList.contains('past-course')) {
+                        continue;
+                    }
+
+                    if (courseDate.includes(filter)) {
+                        courses[i].style.display = "";
+                    } else {
+                        courses[i].style.display = "none";
+                    }
+                }
+            }
+        }
+
+        // Toggle past courses visibility
+        function togglePastCourses(initialize = false) {
+            if (!initialize) {
+                hidePastCourses = !hidePastCourses;
+            }
+
+            const container = document.getElementById('all-courses-container');
+
+            if (container) {
+                const pastCourses = container.getElementsByClassName('past-course');
+
+                for (let i = 0; i < pastCourses.length; i++) {
+                    pastCourses[i].style.display = hidePastCourses ? "none" : "";
+                }
+            }
+
+            // Reapply date filter after toggling
+            filterCourses();
         }
     </script>
 </body>

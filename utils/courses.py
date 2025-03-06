@@ -5,7 +5,7 @@ Handles retrieving course information and attendance details.
 
 import requests
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import config
 
 # Set up logging
@@ -28,6 +28,7 @@ class CourseManager:
         self.current_semester = None
         self.courses = []
         self.today_courses = []
+        self.all_course_schedules = []
 
     def get_current_semester(self):
         """
@@ -177,3 +178,95 @@ class CourseManager:
         self.today_courses = today_courses
         logger.info(f"Found {len(today_courses)} courses scheduled for today")
         return today_courses
+
+    def get_all_course_schedules(self, days_range=30):
+        """
+        Get all course schedules within a specified date range.
+        Retrieves past and future course schedules for attendance.
+
+        Args:
+            days_range: Number of days to look back and forward (default: 30)
+
+        Returns:
+            list: List of course schedules with attendance details
+        """
+        if not self.courses:
+            self.get_all_courses()
+
+        # Calculate date range
+        today = datetime.now()
+        start_date = today - timedelta(days=days_range)
+        end_date = today + timedelta(days=days_range)
+
+        logger.info(f"Getting course schedules from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+
+        all_schedules = []
+
+        # For each course, get the attendance details
+        for course in self.courses:
+            try:
+                course_id = course.get("course_id")
+                if not course_id:
+                    continue
+
+                url = f"{config.ICLASS_API_BASE}/my/get_my_course_sign_detail.action"
+                params = {
+                    "id": self.user_id,
+                    "courseId": course_id
+                }
+
+                response = self.session.post(url, params=params)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("STATUS") == "0":
+                        attendance_records = data.get("result", [])
+
+                        # Process all records
+                        for record in attendance_records:
+                            try:
+                                record_date = record.get("teachTime", "")
+
+                                # Skip if date is missing
+                                if not record_date:
+                                    continue
+
+                                # Parse the date
+                                try:
+                                    record_date_obj = datetime.strptime(record_date, "%Y%m%d")
+                                except ValueError:
+                                    logger.error(f"Invalid date format: {record_date}")
+                                    continue
+
+                                # Check if the class is within the date range
+                                if start_date <= record_date_obj <= end_date:
+                                    # Add attendance details to the course
+                                    course_with_attendance = course.copy()
+                                    course_with_attendance["schedId"] = record.get("courseSchedId")
+                                    course_with_attendance["beginTime"] = record.get("classBeginTime")
+                                    course_with_attendance["endTime"] = record.get("classEndTime")
+                                    course_with_attendance["signStatus"] = record.get("signStatus")
+                                    course_with_attendance["teachDate"] = record_date
+                                    course_with_attendance["formattedDate"] = record_date_obj.strftime("%Y-%m-%d")
+
+                                    # Add a flag for today
+                                    is_today = record_date == today.strftime("%Y%m%d")
+                                    course_with_attendance["isToday"] = is_today
+
+                                    # Add a flag for past dates
+                                    is_past = record_date_obj < today
+                                    course_with_attendance["isPast"] = is_past
+
+                                    all_schedules.append(course_with_attendance)
+                                    logger.info(f"Found course schedule for {course.get('course_name')} on {record_date_obj.strftime('%Y-%m-%d')}")
+                            except Exception as e:
+                                logger.error(f"Error processing record for course {course.get('course_name')}: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error processing course {course.get('course_name')}: {str(e)}")
+
+        # Sort schedules by date
+        all_schedules.sort(key=lambda x: x.get("teachDate", ""))
+
+        self.all_course_schedules = all_schedules
+        logger.info(f"Found {len(all_schedules)} course schedules within the date range")
+        return all_schedules
