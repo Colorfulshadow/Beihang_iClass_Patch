@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>北航iClass签到助手</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>北航iClass签到助手</h1>
+
+        {% if error %}
+        <div class="status error">{{ error }}</div>
+        {% endif %}
+
+        {% if not logged_in %}
+        <!-- Login Form -->
+        <div class="login-form">
+            <form method="post" action="{{ url_for('login') }}">
+                <div class="form-group">
+                    <label for="username">用户名:</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">密码:</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+
+                <button type="submit" class="login-button">登录</button>
+            </form>
+        </div>
+        {% else %}
+
+        <!-- User info and controls -->
+        <div class="header">
+            <div class="user-info">
+                当前用户: {{ user_info.realName }} ({{ user_info.userName }})
+                {% if user_info.classInfoName %}
+                | 班级: {{ user_info.classInfoName }}
+                {% endif %}
+            </div>
+
+            <div class="controls">
+                <form method="post" action="{{ url_for('refresh') }}" style="display: inline;">
+                    <button type="submit" class="refresh-button">刷新课程</button>
+                </form>
+
+                <form method="post" action="{{ url_for('logout') }}" style="display: inline;">
+                    <button type="submit" class="logout-button">退出登录</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="form-group update-frequency">
+            <label for="updateInterval">二维码更新频率:</label>
+            <select id="updateInterval" onchange="changeUpdateInterval()">
+                <option value="1000">每秒更新</option>
+                <option value="5000" selected>每5秒更新</option>
+                <option value="10000">每10秒更新</option>
+                <option value="30000">每30秒更新</option>
+                <option value="60000">每分钟更新</option>
+            </select>
+        </div>
+
+        <div class="time-display">
+            当前时间: <span id="current-time"></span>
+        </div>
+
+        <!-- Courses Container -->
+        {% if today_courses %}
+        <div class="course-container">
+            {% for course in today_courses %}
+            <div class="course-card {% if course.signStatus == '1' %}signed{% else %}unsigned{% endif %}">
+                <div class="course-header">
+                    <div class="course-title">{{ course.course_name }}</div>
+                    <div class="course-time">
+                        {{ course.beginTime|replace('2025-', '')|replace('2024-', '') }} -
+                        {{ course.endTime.split(' ')[1] }}
+                    </div>
+                </div>
+
+                <div class="course-location">
+                    {% if course.course_address %}
+                    <strong>地点:</strong> {{ course.course_address }}
+                    {% endif %}
+                </div>
+
+                <div class="course-teacher">
+                    {% if course.teacher_name %}
+                    <strong>教师:</strong> {{ course.teacher_name }}
+                    {% endif %}
+                </div>
+
+                <div class="course-status">
+                    <strong>状态:</strong>
+                    {% if course.signStatus == '1' %}
+                    已签到
+                    {% else %}
+                    未签到
+                    {% endif %}
+                </div>
+
+                <div class="qrcode-container">
+                    <div id="qrcode-{{ course.schedId }}"></div>
+                    <div class="refresh-info">二维码将自动更新</div>
+                    <div class="url-display" id="url-{{ course.schedId }}"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="no-courses">
+            <p>今天没有需要签到的课程</p>
+        </div>
+        {% endif %}
+        {% endif %}
+    </div>
+
+    <script>
+        // Global variables
+        let updateTimer;
+        let updateInterval = 5000; // Default 5 seconds
+        const courseSchedIds = [
+            {% for course in today_courses %}
+            "{{ course.schedId }}",
+            {% endfor %}
+        ];
+
+        // Page load initialization
+        window.onload = function() {
+            updateTime();
+            setInterval(updateTime, 1000);
+
+            // Initialize QR codes
+            if (courseSchedIds.length > 0) {
+                startAutoUpdate();
+            }
+        };
+
+        // Update current time display
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toLocaleString('zh-CN');
+        }
+
+        // Change update frequency
+        function changeUpdateInterval() {
+            updateInterval = parseInt(document.getElementById('updateInterval').value);
+            startAutoUpdate();
+        }
+
+        // Start auto-updating QR codes
+        function startAutoUpdate() {
+            // Clear previous timer
+            if (updateTimer) {
+                clearInterval(updateTimer);
+            }
+
+            // Generate QR codes immediately
+            generateAllQRCodes();
+
+            // Set timer for periodic updates
+            updateTimer = setInterval(generateAllQRCodes, updateInterval);
+        }
+
+        // Generate all QR codes
+        function generateAllQRCodes() {
+            courseSchedIds.forEach(function(schedId) {
+                generateQRCode(schedId);
+            });
+        }
+
+        // Generate QR code for a specific course
+        function generateQRCode(schedId) {
+            if (!schedId) return;
+
+            // Generate timestamp (milliseconds)
+            const timestamp = Date.now() * 1000;
+
+            // Construct URL
+            const url = `http://iclass.buaa.edu.cn:8081/app/course/stu_scan_sign.action?courseSchedId=${schedId}&timestamp=${timestamp}`;
+
+            // Display URL
+            const urlElement = document.getElementById(`url-${schedId}`);
+            if (urlElement) {
+                urlElement.textContent = url;
+            }
+
+            // Clear previous QR code
+            const qrcodeElement = document.getElementById(`qrcode-${schedId}`);
+            if (qrcodeElement) {
+                qrcodeElement.innerHTML = '';
+
+                // Generate new QR code
+                new QRCode(qrcodeElement, {
+                    text: url,
+                    width: 200,
+                    height: 200,
+                    colorDark: '#000000',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+            }
+        }
+    </script>
+</body>
+</html>
